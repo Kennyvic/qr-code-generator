@@ -1,11 +1,11 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import qrcode
-import boto3
+from azure.storage.blob import BlobClient
 import os
 from io import BytesIO
 
-# Loading Environment variable (AWS Access Key and Secret Key)
+# Loading Environment variable (Azure Blob Storage credentials)
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -23,13 +23,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# AWS S3 Configuration
-s3 = boto3.client(
-    's3',
-    aws_access_key_id= os.getenv("AWS_ACCESS_KEY"),
-    aws_secret_access_key= os.getenv("AWS_SECRET_KEY"))
-
-bucket_name = 'YOUR_BUCKET_NAME' # Add your bucket name here
+# Azure Blob Storage Configuration
+BLOB_ACCOUNT_URL = os.getenv("AZURE_BLOB_SAS_URL")
+SAS_TOKEN = os.getenv("AZURE_BLOB_SAS_TOKEN")      
+container_name = os.getenv("AZURE_CONTAINER_NAME")
 
 @app.post("/generate-qr/")
 async def generate_qr(url: str):
@@ -50,16 +47,22 @@ async def generate_qr(url: str):
     img.save(img_byte_arr, format='PNG')
     img_byte_arr.seek(0)
 
-    # Generate file name for S3
+    # Generate file name
     file_name = f"qr_codes/{url.split('//')[-1]}.png"
 
     try:
-        # Upload to S3
-        s3.put_object(Bucket=bucket_name, Key=file_name, Body=img_byte_arr, ContentType='image/png', ACL='public-read')
+        # Upload to Azure Blob Storage using SAS token
+        blob_client = BlobClient(
+            account_url=BLOB_ACCOUNT_URL,
+            container_name=container_name,
+            blob_name=file_name,
+            credential=SAS_TOKEN
+        )
+        blob_client.upload_blob(img_byte_arr, blob_type="BlockBlob", overwrite=True)
         
-        # Generate the S3 URL
-        s3_url = f"https://{bucket_name}.s3.amazonaws.com/{file_name}"
-        return {"qr_code_url": s3_url}
+        # Generate the blob URL
+        blob_url = f"{blob_client.url}?{SAS_TOKEN}"
+        return {"qr_code_url": blob_url}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
